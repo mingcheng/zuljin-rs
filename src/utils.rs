@@ -1,3 +1,4 @@
+/// Format a byte count into a human-readable string (e.g. "1.50 KB", "3.00 GB").
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;

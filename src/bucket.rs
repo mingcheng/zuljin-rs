@@ -4,7 +4,9 @@ use infer::Infer;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+/// File storage engine. Stores files under `<bucket_path>/YYYY_mm_dd/<timestamp>.<ext>`.
 pub struct Bucket {
+    /// Canonicalized root directory; all keys are resolved relative to this path.
     pub path: PathBuf,
 }
 
@@ -57,22 +59,24 @@ impl Bucket {
             ));
         }
 
-        Ok(Bucket { path })
+        Ok(Bucket {
+            path: path.canonicalize()?,
+        })
     }
 
     /// Resolve a key to its full filesystem path, returning an error if it doesn't exist.
     fn resolve(&self, key: &str) -> std::io::Result<PathBuf> {
-        let full_path = self.path.join(key);
-        if !full_path.exists() {
+        let full_path = self.path.join(key).canonicalize()?;
+        if !full_path.starts_with(&self.path) {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "File not found",
+                std::io::ErrorKind::PermissionDenied,
+                "Path traversal detected",
             ));
         }
         Ok(full_path)
     }
 
-    /// Save file content and return the generated key (`YYYY/mm/<timestamp>.<ext>`).
+    /// Save file content and return the generated key (`YYYY_mm_dd/<timestamp>.<ext>`).
     pub fn save(
         &self,
         data: Vec<u8>,
@@ -84,12 +88,14 @@ impl Bucket {
         // Determine file extension using content, MIME hint, and original name
         let ext = resolve_extension(&data, mime_hint, original_name);
 
-        // Generate key with date-based directories and timestamp filename
+        // Generate key with date-based directories and timestamp filename.
+        // Use nanosecond precision to avoid collisions from concurrent uploads.
         let key = format!(
-            "{}/{}/{}.{}",
+            "{}_{}_{}/{}.{}",
             now.format("%Y"),
             now.format("%m"),
-            now.timestamp(),
+            now.format("%d"),
+            now.timestamp_nanos_opt().unwrap_or(now.timestamp() * 1_000_000_000),
             ext
         );
 
@@ -110,6 +116,11 @@ impl Bucket {
     pub fn get_content(&self, key: &str) -> std::io::Result<Vec<u8>> {
         let full_path = self.resolve(key)?;
         fs::read(full_path)
+    }
+
+    pub fn delete(&self, key: &str) -> std::io::Result<()> {
+        let full_path = self.resolve(key)?;
+        fs::remove_file(full_path)
     }
 
     /// Get available disk space for the bucket path.
@@ -210,10 +221,9 @@ mod tests {
             .save(b"hello".to_vec(), None, Some("test.txt"))
             .unwrap();
         let parts: Vec<&str> = key.split('/').collect();
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0].len(), 4); // YYYY
-        assert_eq!(parts[1].len(), 2); // mm
-        assert!(parts[2].ends_with(".txt"));
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].len(), 10); // YYYY_mm_dd
+        assert!(parts[1].ends_with(".txt"));
     }
 
     #[test]

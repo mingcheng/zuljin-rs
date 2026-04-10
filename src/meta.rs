@@ -7,6 +7,7 @@ use std::io::Read;
 /// Max bytes to read for magic-byte type detection.
 const TYPE_DETECT_BYTES: usize = 8192;
 
+/// File metadata detected from on-disk content via magic-byte analysis.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileMeta {
     pub(crate) path: String,
@@ -30,6 +31,7 @@ impl FileMeta {
         Ok(result)
     }
 
+    /// Read the first few kilobytes and detect content type via magic bytes.
     fn detect(&mut self) -> std::io::Result<()> {
         let mut f = File::open(&self.path)?;
         self.size = f.metadata()?.len() as usize;

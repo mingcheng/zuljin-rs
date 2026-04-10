@@ -1,23 +1,49 @@
 mod bucket;
+mod client;
 mod http;
 mod meta;
 mod utils;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use bucket::Bucket;
-use clap::{Parser, Subcommand};
+use chrono::Local;
+use clap::{Args, Parser, Subcommand};
+use client::Client;
+use http::AppState;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::limit::RequestBodyLimitLayer;
+use tracing::info;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Parser)]
 #[command(name = "zuljin", about = "File upload and download service")]
 struct Cli {
+    /// Enable verbose (debug-level) console output
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Common arguments for CLI commands that talk to a remote Zuljin server.
+#[derive(Args)]
+struct RemoteArgs {
+    /// Server address (also reads ZULJIN_SERVER env)
+    #[arg(
+        short,
+        long,
+        default_value = "http://127.0.0.1:3000",
+        env = "ZULJIN_SERVER"
+    )]
+    server: String,
+    /// Auth token (also reads ZULJIN_TOKEN env)
+    #[arg(long, env = "ZULJIN_TOKEN")]
+    token: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -33,43 +59,106 @@ enum Commands {
         /// Max upload size in MB
         #[arg(short, long, default_value_t = 250)]
         max_size: usize,
+        /// Auth token (also reads ZULJIN_TOKEN env)
+        #[arg(short, long, env = "ZULJIN_TOKEN")]
+        token: Option<String>,
+        /// Directory for log files (monthly rotation, e.g. logs/2026-04.log)
+        #[arg(long, env = "ZULJIN_LOG_DIR")]
+        log_dir: Option<String>,
     },
-    /// Upload a file via CLI
+    /// Upload a file to the server
     Upload {
         /// File to upload
         #[arg(short, long)]
         file: String,
-        /// Upload directory
-        #[arg(short, long, default_value = "uploads")]
-        dir: String,
+        #[command(flatten)]
+        remote: RemoteArgs,
     },
-    /// Download / read a file from the bucket
+    /// Download a file from the server
     Download {
-        /// File key (e.g. 2026/03/1743408000000000.png)
+        /// File key (e.g. 2026_03_30/1743408000.png)
         #[arg(short, long)]
         key: String,
-        /// Upload directory
-        #[arg(long, default_value = "uploads")]
-        dir: String,
+        /// Server address (also reads ZULJIN_SERVER env)
+        #[arg(
+            short,
+            long,
+            default_value = "http://127.0.0.1:3000",
+            env = "ZULJIN_SERVER"
+        )]
+        server: String,
         /// Output file path (defaults to current dir with original filename)
         #[arg(short, long)]
         output: Option<String>,
     },
-    /// Show file metadata
+    /// Show file metadata from the server
     Info {
-        /// File key (e.g. 2026/03/1743408000000000.png)
+        /// File key (e.g. 2026_03_30/1743408000.png)
         #[arg(short, long)]
         key: String,
-        /// Upload directory
-        #[arg(long, default_value = "uploads")]
-        dir: String,
+        #[command(flatten)]
+        remote: RemoteArgs,
     },
-    /// Show disk space for the upload directory
+    /// Show disk space of the server
     Disk {
-        /// Upload directory
-        #[arg(short, long, default_value = "uploads")]
-        dir: String,
+        #[command(flatten)]
+        remote: RemoteArgs,
     },
+    /// Delete a file from the server
+    Delete {
+        /// File key (e.g. 2026_03_30/1743408000.png)
+        #[arg(short, long)]
+        key: String,
+        #[command(flatten)]
+        remote: RemoteArgs,
+    },
+}
+
+/// Unwrap a `Result`, printing the error with a label and exiting on failure.
+fn unwrap_or_exit<T>(result: Result<T, String>, label: &str) -> T {
+    result.unwrap_or_else(|e| {
+        eprintln!("{label}: {e}");
+        std::process::exit(1);
+    })
+}
+
+/// Initialize the tracing/logging subsystem.
+///
+/// Log level priority: `ZULJIN_LOG` env > `RUST_LOG` env > `--verbose` flag > default (`info`).
+/// - `log_dir`: if `Some`, a file layer writes to `<log_dir>/YYYY-MM.log`.
+fn init_tracing(verbose: bool, log_dir: Option<&str>) {
+    let env_filter = EnvFilter::try_from_env("ZULJIN_LOG")
+        .or_else(|_| EnvFilter::try_from_default_env())
+        .unwrap_or_else(|_| {
+            if verbose {
+                EnvFilter::new("debug")
+            } else {
+                EnvFilter::new("info")
+            }
+        });
+
+    let console_layer = fmt::layer().with_target(false);
+
+    if let Some(dir) = log_dir {
+        std::fs::create_dir_all(dir).expect("Failed to create log directory");
+        let filename = format!("{}.log", Local::now().format("%Y-%m"));
+        let file_appender = tracing_appender::rolling::never(dir, filename);
+        let file_layer = fmt::layer()
+            .with_writer(file_appender)
+            .with_ansi(false)
+            .with_target(false);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(console_layer)
+            .with(file_layer)
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(console_layer)
+            .init();
+    }
 }
 
 #[tokio::main]
@@ -81,80 +170,101 @@ async fn main() -> std::io::Result<()> {
             bind,
             dir,
             max_size,
+            token,
+            log_dir,
         } => {
+            init_tracing(cli.verbose, log_dir.as_deref());
+
             let bucket = Arc::new(Bucket::new(&dir)?);
-            println!("Upload directory: {}", bucket.path.display());
-            println!("Listening on: {}", bind);
+            info!(directory = %bucket.path.display(), "Upload directory ready");
+            if token.is_some() {
+                info!("Token auth enabled");
+            }
+            info!(address = %bind, max_size_mb = max_size, "Starting server");
+
+            let state = AppState { bucket, token };
 
             let app = Router::new()
                 .route("/", get(http::show_form))
                 .route("/upload", post(http::upload))
                 .route("/files/{*path}", get(http::download))
-                .with_state(bucket)
+                .route("/api/info/{*path}", get(http::file_info))
+                .route("/api/disk", get(http::disk_info))
+                .route("/api/delete/{*path}", delete(http::delete_file))
+                .with_state(state)
                 .layer(DefaultBodyLimit::disable())
                 .layer(RequestBodyLimitLayer::new(max_size * 1024 * 1024));
 
             let listener = TcpListener::bind(&bind).await?;
             axum::serve(listener, app).await
         }
-        Commands::Upload { file, dir } => {
-            let bucket = Bucket::new(&dir)?;
+        Commands::Upload { file, remote } => {
+            init_tracing(cli.verbose, None);
             let path = Path::new(&file);
             if !path.exists() {
                 eprintln!("Error: file '{}' does not exist", file);
                 std::process::exit(1);
             }
 
-            let data = std::fs::read(path)?;
-            let original_name = path.file_name().and_then(|n| n.to_str());
-            let key = bucket.save(data, None, original_name)?;
-            println!("Uploaded: {}", key);
-            println!("Full path: {}", bucket.path.join(&key).display());
+            let client = Client::new(&remote.server, remote.token);
+            let results = unwrap_or_exit(client.upload(&file).await, "Upload failed");
+            for r in &results {
+                println!("Uploaded: {}", r.key);
+                println!("Size:     {}", utils::format_size(r.size as u64));
+            }
             Ok(())
         }
-        Commands::Download { key, dir, output } => {
-            let bucket = Bucket::new(&dir)?;
-            let content = bucket.get_content(&key)?;
+        Commands::Download {
+            key,
+            server,
+            output,
+        } => {
+            init_tracing(cli.verbose, None);
+            let client = Client::new(&server, None);
+            let content = unwrap_or_exit(client.download(&key).await, "Download failed");
 
-            let out_path = match output {
-                Some(p) => p,
-                None => {
-                    // Use the filename part of the key
-                    Path::new(&key)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("download.bin")
-                        .to_string()
-                }
-            };
+            let out_path = output.unwrap_or_else(|| {
+                Path::new(&key)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("download.bin")
+                    .to_string()
+            });
 
             std::fs::write(&out_path, &content)?;
             println!("Downloaded to: {}", out_path);
             println!("Size: {}", utils::format_size(content.len() as u64));
             Ok(())
         }
-        Commands::Info { key, dir } => {
-            let bucket = Bucket::new(&dir)?;
-            let meta = bucket.get_meta(&key)?;
-            println!("Path:         {}", meta.path);
-            println!("Size:         {}", utils::format_size(meta.size as u64));
+        Commands::Info { key, remote } => {
+            init_tracing(cli.verbose, None);
+            let client = Client::new(&remote.server, remote.token);
+            let info = unwrap_or_exit(client.info(&key).await, "Info failed");
+            println!("Key:          {}", info.key);
+            println!("Size:         {}", utils::format_size(info.size as u64));
             println!(
                 "Content-Type: {}",
-                meta.content_type.as_deref().unwrap_or("unknown")
+                info.content_type.as_deref().unwrap_or("unknown")
             );
             println!(
                 "Extension:    {}",
-                meta.extension.as_deref().unwrap_or("unknown")
+                info.extension.as_deref().unwrap_or("unknown")
             );
             Ok(())
         }
-        Commands::Disk { dir } => {
-            let bucket = Bucket::new(&dir)?;
-            println!("Upload directory: {}", bucket.path.display());
-            match bucket.available_space() {
-                Ok(space) => println!("Available space:  {}", utils::format_size(space)),
-                Err(e) => eprintln!("Failed to get disk space: {}", e),
-            }
+        Commands::Disk { remote } => {
+            init_tracing(cli.verbose, None);
+            let client = Client::new(&remote.server, remote.token);
+            let info = unwrap_or_exit(client.disk().await, "Disk info failed");
+            println!("Upload directory: {}", info.path);
+            println!("Available space:  {}", info.available_human);
+            Ok(())
+        }
+        Commands::Delete { key, remote } => {
+            init_tracing(cli.verbose, None);
+            let client = Client::new(&remote.server, remote.token);
+            let result = unwrap_or_exit(client.delete(&key).await, "Delete failed");
+            println!("Deleted: {}", result.key);
             Ok(())
         }
     }
