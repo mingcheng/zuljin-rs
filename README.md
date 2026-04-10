@@ -25,9 +25,6 @@ cargo build --release  # release
 ### Start the server
 
 ```bash
-# Defaults: 127.0.0.1:3000, ./uploads, 250 MB limit
-cargo run -- serve
-
 # Custom bind address, directory, size limit, and token
 cargo run -- serve -b 0.0.0.0:8080 -d /data/uploads -m 500 -t my-secret
 ```
@@ -47,19 +44,19 @@ curl -H "Authorization: Bearer my-secret" \
      -F "file=@photo.jpg" http://127.0.0.1:3000/upload
 
 # Download (public)
-curl -O http://127.0.0.1:3000/files/2026_03_30/1743408000.jpg
+curl -O http://127.0.0.1:3000/get/2026_03_30/1743408000000000000.jpg
 
 # File info (with token)
 curl -H "Authorization: Bearer my-secret" \
-     http://127.0.0.1:3000/api/info/2026_03_30/1743408000.jpg
+     http://127.0.0.1:3000/info/2026_03_30/1743408000000000000.jpg
 
 # Disk space (with token)
 curl -H "Authorization: Bearer my-secret" \
-     http://127.0.0.1:3000/api/disk
+     http://127.0.0.1:3000/disk
 
 # Delete (with token)
 curl -X DELETE -H "Authorization: Bearer my-secret" \
-     http://127.0.0.1:3000/api/delete/2026_03_30/1743408000.jpg
+     http://127.0.0.1:3000/delete/2026_03_30/1743408000000000000.jpg
 ```
 
 ### CLI client
@@ -145,14 +142,13 @@ src/
 
 ## API
 
-| Method | Path                | Auth  | Description              |
-| ------ | ------------------- | ----- | ------------------------ |
-| GET    | `/`                 | No    | Upload form (HTML)       |
-| POST   | `/upload`           | Token | Upload files (multipart) |
-| GET    | `/files/{key}`      | No    | Download file            |
-| GET    | `/api/info/{key}`   | Token | File metadata            |
-| GET    | `/api/disk`         | Token | Available disk space     |
-| DELETE | `/api/delete/{key}` | Token | Delete file              |
+| Method | Path            | Auth  | Description              |
+| ------ | --------------- | ----- | ------------------------ |
+| POST   | `/upload`       | Token | Upload files (multipart) |
+| GET    | `/get/{key}`    | No    | Download file            |
+| GET    | `/info/{key}`   | Token | File metadata            |
+| GET    | `/disk`         | Token | Available disk space     |
+| DELETE | `/delete/{key}` | Token | Delete file              |
 
 All API responses (except download) use a unified JSON envelope:
 

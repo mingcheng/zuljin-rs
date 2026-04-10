@@ -80,7 +80,7 @@ impl Client {
     pub async fn download(&self, key: &str) -> Result<Vec<u8>, String> {
         let resp = self
             .http
-            .get(self.url(&format!("/files/{key}")))
+            .get(self.url(&format!("/get/{key}")))
             .send()
             .await
             .map_err(|e| format!("Request failed: {e}"))?;
@@ -96,15 +96,15 @@ impl Client {
     }
 
     pub async fn info(&self, key: &str) -> Result<FileInfo, String> {
-        self.get_json(&format!("/api/info/{key}")).await
+        self.get_json(&format!("/info/{key}")).await
     }
 
     pub async fn disk(&self) -> Result<DiskInfo, String> {
-        self.get_json("/api/disk").await
+        self.get_json("/disk").await
     }
 
     pub async fn delete(&self, key: &str) -> Result<DeleteResult, String> {
-        let req = self.with_auth(self.http.delete(self.url(&format!("/api/delete/{key}"))));
+        let req = self.with_auth(self.http.delete(self.url(&format!("/delete/{key}"))));
         self.send_and_parse(req).await
     }
 }

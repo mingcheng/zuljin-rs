@@ -95,7 +95,7 @@ impl Bucket {
             now.format("%Y"),
             now.format("%m"),
             now.format("%d"),
-            now.timestamp_nanos_opt().unwrap_or(now.timestamp() * 1_000_000_000),
+            now.timestamp(),
             ext
         );
 

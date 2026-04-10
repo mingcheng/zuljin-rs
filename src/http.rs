@@ -3,7 +3,7 @@ use axum::Json;
 use axum::body::Body;
 use axum::extract::{Multipart, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -105,26 +105,6 @@ fn verify_token(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
             Err(err_response(StatusCode::UNAUTHORIZED, "Missing token"))
         }
     }
-}
-
-pub async fn show_form() -> Html<&'static str> {
-    Html(
-        r#"
-        <!doctype html>
-        <html>
-            <head><title>Zuljin Upload</title></head>
-            <body>
-                <form action="/upload" method="post" enctype="multipart/form-data">
-                    <label>
-                        Upload file:
-                        <input type="file" name="file" multiple>
-                    </label>
-                    <input type="submit" value="Upload files">
-                </form>
-            </body>
-        </html>
-        "#,
-    )
 }
 
 /// Handle multipart file upload. Requires token. Supports multiple files in one request.
@@ -291,24 +271,13 @@ mod tests {
             token: token.map(|t| t.to_string()),
         };
         let app = Router::new()
-            .route("/", get(show_form))
             .route("/upload", post(upload))
-            .route("/files/{*path}", get(download))
-            .route("/api/info/{*path}", get(file_info))
-            .route("/api/disk", get(disk_info))
-            .route("/api/delete/{*path}", delete(delete_file))
+            .route("/get/{*path}", get(download))
+            .route("/info/{*path}", get(file_info))
+            .route("/disk", get(disk_info))
+            .route("/delete/{*path}", delete(delete_file))
             .with_state(state);
         (TestServer::builder().build(app), dir)
-    }
-
-    #[tokio::test]
-    async fn test_show_form_returns_html() {
-        let (server, _dir) = make_server();
-        let res = server.get("/").await;
-        res.assert_status_ok();
-        let text = res.text();
-        assert!(text.contains("<form"));
-        assert!(text.contains("Upload file"));
     }
 
     #[tokio::test]
@@ -327,7 +296,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].size, content.len());
 
-        let download_res = server.get(&format!("/files/{}", results[0].key)).await;
+        let download_res = server.get(&format!("/get/{}", results[0].key)).await;
         download_res.assert_status_ok();
         assert_eq!(download_res.as_bytes().as_ref(), content);
     }
@@ -348,7 +317,7 @@ mod tests {
     async fn test_download_not_found() {
         let (server, _dir) = make_server();
         server
-            .get("/files/2026_01_01/nonexistent.txt")
+            .get("/get/2026_01_01/nonexistent.txt")
             .await
             .assert_status(StatusCode::NOT_FOUND);
     }
@@ -379,7 +348,7 @@ mod tests {
             server.post("/upload").multipart(form).await.json();
         let key = &upload_res.data.unwrap()[0].key;
 
-        let res = server.get(&format!("/api/info/{key}")).await;
+        let res = server.get(&format!("/info/{key}")).await;
         res.assert_status_ok();
 
         let body: ApiResponse<FileInfo> = res.json();
@@ -393,7 +362,7 @@ mod tests {
     async fn test_file_info_not_found() {
         let (server, _dir) = make_server();
         server
-            .get("/api/info/2026_01_01/nonexistent.txt")
+            .get("/info/2026_01_01/nonexistent.txt")
             .await
             .assert_status(StatusCode::NOT_FOUND);
     }
@@ -401,7 +370,7 @@ mod tests {
     #[tokio::test]
     async fn test_disk_info() {
         let (server, _dir) = make_server();
-        let res = server.get("/api/disk").await;
+        let res = server.get("/disk").await;
         res.assert_status_ok();
 
         let body: ApiResponse<DiskInfo> = res.json();
@@ -500,7 +469,7 @@ mod tests {
         let key = &body.data.unwrap()[0].key;
 
         // Download without token should succeed (public)
-        let res = server.get(&format!("/files/{key}")).await;
+        let res = server.get(&format!("/get/{key}")).await;
         res.assert_status_ok();
         assert_eq!(res.as_bytes().as_ref(), b"public");
     }
@@ -510,7 +479,7 @@ mod tests {
         let (server, _dir) = make_server_with_token(Some("tok"));
 
         server
-            .get("/api/info/2026_01_01/x.txt")
+            .get("/info/2026_01_01/x.txt")
             .await
             .assert_status(StatusCode::UNAUTHORIZED);
     }
@@ -520,7 +489,7 @@ mod tests {
         let (server, _dir) = make_server_with_token(Some("tok"));
 
         server
-            .get("/api/disk")
+            .get("/disk")
             .await
             .assert_status(StatusCode::UNAUTHORIZED);
     }
@@ -528,7 +497,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_token_configured_allows_access() {
         let (server, _dir) = make_server(); // no token
-        let res = server.get("/api/disk").await;
+        let res = server.get("/disk").await;
         res.assert_status_ok();
     }
 
@@ -546,7 +515,7 @@ mod tests {
             server.post("/upload").multipart(form).await.json();
         let key = body.data.unwrap()[0].key.clone();
 
-        let res = server.delete(&format!("/api/delete/{key}")).await;
+        let res = server.delete(&format!("/delete/{key}")).await;
         res.assert_status_ok();
         let body: ApiResponse<DeleteResult> = res.json();
         assert!(body.success);
@@ -554,7 +523,7 @@ mod tests {
 
         // Verify file is gone
         server
-            .get(&format!("/files/{key}"))
+            .get(&format!("/get/{key}"))
             .await
             .assert_status(StatusCode::NOT_FOUND);
     }
@@ -563,7 +532,7 @@ mod tests {
     async fn test_delete_not_found() {
         let (server, _dir) = make_server();
         server
-            .delete("/api/delete/2026_01_01/nonexistent.txt")
+            .delete("/delete/2026_01_01/nonexistent.txt")
             .await
             .assert_status(StatusCode::NOT_FOUND);
     }
@@ -572,7 +541,7 @@ mod tests {
     async fn test_delete_requires_token() {
         let (server, _dir) = make_server_with_token(Some("tok"));
         server
-            .delete("/api/delete/2026_01_01/x.txt")
+            .delete("/delete/2026_01_01/x.txt")
             .await
             .assert_status(StatusCode::UNAUTHORIZED);
     }

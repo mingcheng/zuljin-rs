@@ -185,12 +185,11 @@ async fn main() -> std::io::Result<()> {
             let state = AppState { bucket, token };
 
             let app = Router::new()
-                .route("/", get(http::show_form))
                 .route("/upload", post(http::upload))
-                .route("/files/{*path}", get(http::download))
-                .route("/api/info/{*path}", get(http::file_info))
-                .route("/api/disk", get(http::disk_info))
-                .route("/api/delete/{*path}", delete(http::delete_file))
+                .route("/get/{*path}", get(http::download))
+                .route("/info/{*path}", get(http::file_info))
+                .route("/disk", get(http::disk_info))
+                .route("/delete/{*path}", delete(http::delete_file))
                 .with_state(state)
                 .layer(DefaultBodyLimit::disable())
                 .layer(RequestBodyLimitLayer::new(max_size * 1024 * 1024));
