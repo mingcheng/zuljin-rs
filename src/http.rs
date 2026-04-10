@@ -62,8 +62,15 @@ pub struct FileInfo {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DiskInfo {
     pub path: String,
+    pub total: u64,
+    pub total_human: String,
     pub available: u64,
     pub available_human: String,
+    pub used: u64,
+    pub used_human: String,
+    pub file_count: u64,
+    pub os: String,
+    pub arch: String,
 }
 
 /// Unified error type returned by all handlers: an HTTP status code paired with a JSON error body.
@@ -209,23 +216,37 @@ pub async fn file_info(
     })))
 }
 
-/// Return available disk space for the bucket directory. Requires token.
+/// Return disk and upload directory statistics. Requires token.
 pub async fn disk_info(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<DiskInfo>>, ApiError> {
     verify_token(&state, &headers)?;
-    let available = state.bucket.available_space().map_err(|e| {
+    let (total, available) = state.bucket.disk_space().map_err(|e| {
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to get disk space: {e}"),
         )
     })?;
 
+    let (used, file_count) = state.bucket.usage().map_err(|e| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to get usage: {e}"),
+        )
+    })?;
+
     Ok(Json(ApiResponse::ok(DiskInfo {
         path: state.bucket.path.display().to_string(),
+        total,
+        total_human: crate::utils::format_size(total),
         available,
         available_human: crate::utils::format_size(available),
+        used,
+        used_human: crate::utils::format_size(used),
+        file_count,
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
     })))
 }
 
@@ -376,9 +397,15 @@ mod tests {
         let body: ApiResponse<DiskInfo> = res.json();
         assert!(body.success);
         let info = body.data.unwrap();
+        assert!(info.total > 0);
         assert!(info.available > 0);
+        assert!(!info.total_human.is_empty());
         assert!(!info.available_human.is_empty());
         assert!(!info.path.is_empty());
+        assert_eq!(info.file_count, 0);
+        assert_eq!(info.used, 0);
+        assert!(!info.os.is_empty());
+        assert!(!info.arch.is_empty());
     }
 
     #[tokio::test]

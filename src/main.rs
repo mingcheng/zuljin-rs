@@ -6,6 +6,7 @@ mod utils;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::http::HeaderValue;
 use axum::routing::{delete, get, post};
 use bucket::Bucket;
 use chrono::Local;
@@ -16,8 +17,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+const BUILD_TIME: &str = compile_time::datetime_str!();
 
 #[derive(Parser)]
 #[command(name = "zuljin", about = "File upload and download service")]
@@ -192,7 +198,16 @@ async fn main() -> std::io::Result<()> {
                 .route("/delete/{*path}", delete(http::delete_file))
                 .with_state(state)
                 .layer(DefaultBodyLimit::disable())
-                .layer(RequestBodyLimitLayer::new(max_size * 1024 * 1024));
+                .layer(RequestBodyLimitLayer::new(max_size * 1024 * 1024))
+                .layer(SetResponseHeaderLayer::overriding(
+                    axum::http::header::SERVER,
+                    HeaderValue::from_static(const_format::formatcp!(
+                        "{}/{} (built {})",
+                        PKG_NAME,
+                        PKG_VERSION,
+                        BUILD_TIME
+                    )),
+                ));
 
             let listener = TcpListener::bind(&bind).await?;
             axum::serve(listener, app).await
@@ -256,7 +271,12 @@ async fn main() -> std::io::Result<()> {
             let client = Client::new(&remote.server, remote.token);
             let info = unwrap_or_exit(client.disk().await, "Disk info failed");
             println!("Upload directory: {}", info.path);
-            println!("Available space:  {}", info.available_human);
+            println!("File count:       {}", info.file_count);
+            println!("Directory usage:  {}", info.used_human);
+            println!("Disk total:       {}", info.total_human);
+            println!("Disk available:   {}", info.available_human);
+            println!("OS:               {}", info.os);
+            println!("Arch:             {}", info.arch);
             Ok(())
         }
         Commands::Delete { key, remote } => {

@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 axum = { version = "0.8.8", features = ["multipart"] }
 tokio = { version = "1.51.1", features = ["full"] }
-tower-http = { version = "0.6", features = ["limit"] }
+tower-http = { version = "0.6", features = ["limit", "set-header"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = "0.4"
@@ -19,6 +19,8 @@ libc = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+compile-time = "0.2.0"
+const_format = "0.2.35"
 
 [dev-dependencies]
 tempfile = "3"

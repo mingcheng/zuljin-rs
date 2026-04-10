@@ -123,8 +123,31 @@ impl Bucket {
         fs::remove_file(full_path)
     }
 
-    /// Get available disk space for the bucket path.
-    pub fn available_space(&self) -> std::io::Result<u64> {
+    /// Calculate the total size and file count of the bucket directory (recursive).
+    pub fn usage(&self) -> std::io::Result<(u64, u64)> {
+        let mut total_size: u64 = 0;
+        let mut file_count: u64 = 0;
+
+        fn walk(dir: &Path, total_size: &mut u64, file_count: &mut u64) -> std::io::Result<()> {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
+                if file_type.is_dir() {
+                    walk(&entry.path(), total_size, file_count)?;
+                } else if file_type.is_file() {
+                    *total_size += entry.metadata()?.len();
+                    *file_count += 1;
+                }
+            }
+            Ok(())
+        }
+
+        walk(&self.path, &mut total_size, &mut file_count)?;
+        Ok((total_size, file_count))
+    }
+
+    /// Get total and available disk space for the bucket path.
+    pub fn disk_space(&self) -> std::io::Result<(u64, u64)> {
         #[cfg(unix)]
         {
             use std::ffi::CString;
@@ -137,7 +160,9 @@ impl Bucket {
             unsafe {
                 let mut stat: libc::statvfs = mem::zeroed();
                 if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-                    Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+                    let total = stat.f_blocks as u64 * stat.f_frsize as u64;
+                    let available = stat.f_bavail as u64 * stat.f_frsize as u64;
+                    Ok((total, available))
                 } else {
                     Err(std::io::Error::last_os_error())
                 }
@@ -264,8 +289,29 @@ mod tests {
     }
 
     #[test]
-    fn test_available_space() {
+    fn test_disk_space() {
         let (bucket, _dir) = make_temp_bucket();
-        assert!(bucket.available_space().unwrap() > 0);
+        let (total, available) = bucket.disk_space().unwrap();
+        assert!(total > 0);
+        assert!(available > 0);
+    }
+
+    #[test]
+    fn test_usage_empty() {
+        let (bucket, _dir) = make_temp_bucket();
+        let (size, count) = bucket.usage().unwrap();
+        assert_eq!(size, 0);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_usage_with_files() {
+        let (bucket, _dir) = make_temp_bucket();
+        bucket.save(b"hello".to_vec(), None, Some("a.txt")).unwrap();
+        // Use a different extension to avoid key collision (same-second timestamp)
+        bucket.save(b"world!!".to_vec(), None, Some("b.csv")).unwrap();
+        let (size, count) = bucket.usage().unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(size, 12); // 5 + 7
     }
 }
