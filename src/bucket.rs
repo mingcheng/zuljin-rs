@@ -173,9 +173,13 @@ impl Bucket {
             })?;
 
             unsafe {
+                // Use statvfs to get filesystem statistics
                 let mut stat: libc::statvfs = mem::zeroed();
                 if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
+                    // Fields have platform-dependent types (e.g. c_ulong on macOS, u64 on Linux)
+                    #[allow(clippy::unnecessary_cast)]
                     let total = stat.f_blocks as u64 * stat.f_frsize as u64;
+                    #[allow(clippy::unnecessary_cast)]
                     let available = stat.f_bavail as u64 * stat.f_frsize as u64;
                     Ok((total, available))
                 } else {
