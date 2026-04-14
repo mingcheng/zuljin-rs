@@ -17,35 +17,30 @@ pub struct FileMeta {
 }
 
 impl FileMeta {
+    /// Build metadata by reading the first few kilobytes and detecting content
+    /// type via magic bytes.
     pub fn new(path: &str) -> std::io::Result<Self> {
         let path = fs::canonicalize(path)?;
+        let mut f = File::open(&path)?;
+        let size = f.metadata()?.len() as usize;
 
-        let mut result = FileMeta {
-            path: path.to_str().unwrap().to_string(),
-            size: 0,
-            content_type: None,
-            extension: None,
-        };
-
-        result.detect()?;
-        Ok(result)
-    }
-
-    /// Read the first few kilobytes and detect content type via magic bytes.
-    fn detect(&mut self) -> std::io::Result<()> {
-        let mut f = File::open(&self.path)?;
-        self.size = f.metadata()?.len() as usize;
-
-        let mut buffer = vec![0u8; TYPE_DETECT_BYTES.min(self.size)];
+        let mut buffer = vec![0u8; TYPE_DETECT_BYTES.min(size)];
         f.read_exact(&mut buffer)?;
 
-        let infer = Infer::new();
-        if let Some(file_type) = infer.get(&buffer) {
-            self.content_type = Some(file_type.mime_type().to_string());
-            self.extension = Some(file_type.extension().to_string());
-        }
+        let (content_type, extension) = match Infer::new().get(&buffer) {
+            Some(file_type) => (
+                Some(file_type.mime_type().to_string()),
+                Some(file_type.extension().to_string()),
+            ),
+            None => (None, None),
+        };
 
-        Ok(())
+        Ok(FileMeta {
+            path: path.to_str().unwrap().to_string(),
+            size,
+            content_type,
+            extension,
+        })
     }
 }
 

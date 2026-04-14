@@ -10,36 +10,52 @@ pub struct Bucket {
     pub path: PathBuf,
 }
 
-/// Resolve the best file extension from content bytes, an optional MIME type hint,
-/// and an optional original filename. Priority:
-///   1. Magic-byte detection via `infer`
+/// Result of a `Bucket::save` operation, carrying the storage key and detected content type.
+pub struct SaveResult {
+    /// Storage key in the form `YYYY_mm_dd/<timestamp>.<ext>`.
+    pub key: String,
+    /// MIME content type, detected from magic bytes or the upload hint.
+    pub content_type: Option<String>,
+}
+
+/// Detect file extension and content type from content bytes, an optional MIME
+/// type hint, and an optional original filename. Returns `(extension, content_type)`.
+///
+/// Priority:
+///   1. Magic-byte detection via `infer` (most accurate, also yields MIME type)
 ///   2. MIME type hint (e.g. from the multipart Content-Type header)
 ///   3. Original filename extension
 ///   4. Fallback to "bin"
-fn resolve_extension(data: &[u8], mime_hint: Option<&str>, original_name: Option<&str>) -> String {
+fn resolve_file_type(
+    data: &[u8],
+    mime_hint: Option<&str>,
+    original_name: Option<&str>,
+) -> (String, Option<String>) {
     // 1. Magic-byte detection
     if let Some(file_type) = Infer::new().get(data) {
-        return file_type.extension().to_string();
+        return (
+            file_type.extension().to_string(),
+            Some(file_type.mime_type().to_string()),
+        );
     }
 
-    // 2. MIME type hint -> extension
-    if let Some(ext) = mime_hint
-        .and_then(mime_guess::get_mime_extensions_str)
-        .and_then(|exts| exts.first())
+    // 2. MIME type hint -> extension (content type is the hint itself)
+    if let Some(mime) = mime_hint
+        && let Some(ext) = mime_guess::get_mime_extensions_str(mime).and_then(|exts| exts.first())
     {
-        return ext.to_string();
+        return (ext.to_string(), Some(mime.to_string()));
     }
 
-    // 3. Original filename extension
+    // 3. Original filename extension (no content type available)
     if let Some(ext) = original_name
         .map(Path::new)
         .and_then(|p| p.extension())
         .and_then(|e| e.to_str())
     {
-        return ext.to_string();
+        return (ext.to_string(), None);
     }
 
-    "bin".to_string()
+    ("bin".to_string(), None)
 }
 
 impl Bucket {
@@ -76,20 +92,19 @@ impl Bucket {
         Ok(full_path)
     }
 
-    /// Save file content and return the generated key (`YYYY_mm_dd/<timestamp>.<ext>`).
+    /// Save file content and return the storage key together with the detected content type.
     pub fn save(
         &self,
         data: Vec<u8>,
         mime_hint: Option<&str>,
         original_name: Option<&str>,
-    ) -> std::io::Result<String> {
+    ) -> std::io::Result<SaveResult> {
         let now = Local::now();
 
-        // Determine file extension using content, MIME hint, and original name
-        let ext = resolve_extension(&data, mime_hint, original_name);
+        // Detect file extension and content type in a single pass
+        let (ext, content_type) = resolve_file_type(&data, mime_hint, original_name);
 
-        // Generate key with date-based directories and timestamp filename.
-        // Use nanosecond precision to avoid collisions from concurrent uploads.
+        // Generate key: date-based directory + unix-timestamp filename
         let key = format!(
             "{}_{}_{}/{}.{}",
             now.format("%Y"),
@@ -105,7 +120,7 @@ impl Bucket {
         }
 
         fs::write(&full_path, &data)?;
-        Ok(key)
+        Ok(SaveResult { key, content_type })
     }
 
     pub fn get_meta(&self, key: &str) -> std::io::Result<FileMeta> {
@@ -195,29 +210,34 @@ mod tests {
         (bucket, dir)
     }
 
-    // --- resolve_extension ---
+    // --- resolve_file_type ---
 
     #[test]
-    fn test_resolve_ext_magic_bytes_wins() {
-        assert_eq!(
-            resolve_extension(&PNG_HEADER, Some("text/csv"), Some("data.csv")),
-            "png"
-        );
+    fn test_resolve_type_magic_bytes_wins() {
+        let (ext, ct) = resolve_file_type(&PNG_HEADER, Some("text/csv"), Some("data.csv"));
+        assert_eq!(ext, "png");
+        assert_eq!(ct.as_deref(), Some("image/png"));
     }
 
     #[test]
-    fn test_resolve_ext_mime_hint() {
-        assert_eq!(resolve_extension(b"hello", Some("text/csv"), None), "csv");
+    fn test_resolve_type_mime_hint() {
+        let (ext, ct) = resolve_file_type(b"hello", Some("text/csv"), None);
+        assert_eq!(ext, "csv");
+        assert_eq!(ct.as_deref(), Some("text/csv"));
     }
 
     #[test]
-    fn test_resolve_ext_original_name() {
-        assert_eq!(resolve_extension(b"hello", None, Some("notes.md")), "md");
+    fn test_resolve_type_original_name() {
+        let (ext, ct) = resolve_file_type(b"hello", None, Some("notes.md"));
+        assert_eq!(ext, "md");
+        assert!(ct.is_none());
     }
 
     #[test]
-    fn test_resolve_ext_fallback() {
-        assert_eq!(resolve_extension(b"hello", None, None), "bin");
+    fn test_resolve_type_fallback() {
+        let (ext, ct) = resolve_file_type(b"hello", None, None);
+        assert_eq!(ext, "bin");
+        assert!(ct.is_none());
     }
 
     // --- Bucket ---
@@ -242,10 +262,10 @@ mod tests {
     #[test]
     fn test_save_key_format() {
         let (bucket, _dir) = make_temp_bucket();
-        let key = bucket
+        let result = bucket
             .save(b"hello".to_vec(), None, Some("test.txt"))
             .unwrap();
-        let parts: Vec<&str> = key.split('/').collect();
+        let parts: Vec<&str> = result.key.split('/').collect();
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].len(), 10); // YYYY_mm_dd
         assert!(parts[1].ends_with(".txt"));
@@ -255,17 +275,18 @@ mod tests {
     fn test_save_and_get_content() {
         let (bucket, _dir) = make_temp_bucket();
         let data = b"test content".to_vec();
-        let key = bucket.save(data.clone(), None, Some("hello.txt")).unwrap();
-        assert_eq!(bucket.get_content(&key).unwrap(), data);
+        let result = bucket.save(data.clone(), None, Some("hello.txt")).unwrap();
+        assert_eq!(bucket.get_content(&result.key).unwrap(), data);
     }
 
     #[test]
     fn test_save_with_mime_hint() {
         let (bucket, _dir) = make_temp_bucket();
-        let key = bucket
+        let result = bucket
             .save(b"col1,col2\na,b\n".to_vec(), Some("text/csv"), None)
             .unwrap();
-        assert!(key.ends_with(".csv"));
+        assert!(result.key.ends_with(".csv"));
+        assert_eq!(result.content_type.as_deref(), Some("text/csv"));
     }
 
     #[test]
@@ -278,8 +299,8 @@ mod tests {
     fn test_get_meta() {
         let (bucket, _dir) = make_temp_bucket();
         let data = b"some bytes".to_vec();
-        let key = bucket.save(data.clone(), None, Some("demo.bin")).unwrap();
-        assert_eq!(bucket.get_meta(&key).unwrap().size, data.len());
+        let result = bucket.save(data.clone(), None, Some("demo.bin")).unwrap();
+        assert_eq!(bucket.get_meta(&result.key).unwrap().size, data.len());
     }
 
     #[test]
@@ -308,8 +329,10 @@ mod tests {
     fn test_usage_with_files() {
         let (bucket, _dir) = make_temp_bucket();
         bucket.save(b"hello".to_vec(), None, Some("a.txt")).unwrap();
-        // Use a different extension to avoid key collision (same-second timestamp)
-        bucket.save(b"world!!".to_vec(), None, Some("b.csv")).unwrap();
+        // Use a different extension to avoid filename collision within the same second
+        bucket
+            .save(b"world!!".to_vec(), None, Some("b.csv"))
+            .unwrap();
         let (size, count) = bucket.usage().unwrap();
         assert_eq!(count, 2);
         assert_eq!(size, 12); // 5 + 7

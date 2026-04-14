@@ -1,4 +1,5 @@
 use crate::bucket::Bucket;
+use crate::bucket::SaveResult;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Multipart, Path, State};
@@ -138,7 +139,11 @@ pub async fn upload(
             continue;
         }
 
-        let key = bucket
+        let size = data.len();
+        let SaveResult {
+            key,
+            content_type: detected_type,
+        } = bucket
             .save(data.to_vec(), content_type.as_deref(), file_name.as_deref())
             .map_err(|e| {
                 err_response(
@@ -147,18 +152,14 @@ pub async fn upload(
                 )
             })?;
 
-        // Detect MIME type directly from in-memory bytes (avoids re-reading from disk)
-        let detected_type = infer::Infer::new()
-            .get(&data)
-            .map(|t| t.mime_type().to_string());
         results.push(UploadResult {
             key: key.clone(),
-            size: data.len(),
+            size,
             content_type: detected_type.or(content_type),
         });
         info!(
             key = %key,
-            size = data.len(),
+            size,
             original_name = file_name.as_deref().unwrap_or("-"),
             "File uploaded"
         );
