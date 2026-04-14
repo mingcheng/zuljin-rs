@@ -191,6 +191,7 @@ async fn main() -> std::io::Result<()> {
             let state = AppState { bucket, token };
 
             let app = Router::new()
+                .route("/healthz", get(http::healthz))
                 .route("/upload", post(http::upload))
                 .route("/get/{*path}", get(http::download))
                 .route("/info/{*path}", get(http::file_info))

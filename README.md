@@ -44,11 +44,11 @@ curl -H "Authorization: Bearer my-secret" \
      -F "file=@photo.jpg" http://127.0.0.1:3000/upload
 
 # Download (public)
-curl -O http://127.0.0.1:3000/get/2026_03_30/1743408000000000000.jpg
+curl -O http://127.0.0.1:3000/get/2026_03_30/1743408000.jpg
 
 # File info (with token)
 curl -H "Authorization: Bearer my-secret" \
-     http://127.0.0.1:3000/info/2026_03_30/1743408000000000000.jpg
+     http://127.0.0.1:3000/info/2026_03_30/1743408000.jpg
 
 # Disk space (with token)
 curl -H "Authorization: Bearer my-secret" \
@@ -56,7 +56,7 @@ curl -H "Authorization: Bearer my-secret" \
 
 # Delete (with token)
 curl -X DELETE -H "Authorization: Bearer my-secret" \
-     http://127.0.0.1:3000/delete/2026_03_30/1743408000000000000.jpg
+     http://127.0.0.1:3000/delete/2026_03_30/1743408000.jpg
 ```
 
 ### CLI client
@@ -116,6 +116,86 @@ Logged events include file uploads (key, size, original name), file deletions, d
 | `ZULJIN_SERVER`  | Server address used by CLI commands                     | `http://127.0.0.1:3000`         |
 | `ZULJIN_LOG`     | Log level filter (e.g. `debug`, `info,zuljin_rs=trace`) | `info`                          |
 | `ZULJIN_LOG_DIR` | Directory for monthly log files (serve only)            | *(none, file logging disabled)* |
+
+## Deployment
+
+### Docker
+
+Pre-built image is available on GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/mingcheng/zuljin-rs
+```
+
+Run with custom token and persistent storage:
+
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -e ZULJIN_TOKEN=my-secret \
+  -v zuljin-uploads:/data/uploads \
+  ghcr.io/mingcheng/zuljin-rs
+```
+
+Or build from source:
+
+```bash
+docker build -t zuljin-rs .
+
+docker run -d \
+  -p 3000:3000 \
+  -e ZULJIN_TOKEN=my-secret \
+  -v zuljin-uploads:/data/uploads \
+  zuljin-rs
+```
+
+The Dockerfile uses a multi-stage build (Alpine-based) and runs as a non-root user (`zuljin`). By default the container:
+
+- Binds to `0.0.0.0:3000`
+- Stores uploads in `/data/uploads`
+- Uses `zuljin-rs` as the default token (override via `ZULJIN_TOKEN`)
+
+### Docker Compose
+
+```bash
+# Start
+docker compose up -d
+
+# Stop
+docker compose down
+```
+
+The `compose.yaml` exposes port 3000 and uses a named volume `uploads` for persistent storage. Set `ZULJIN_TOKEN` in the environment section to enable authentication:
+
+```yaml
+services:
+  zuljin:
+    image: ghcr.io/mingcheng/zuljin-rs  # or use build: { context: . }
+    ports:
+      - "3000:3000"
+    environment:
+      ZULJIN_TOKEN: "my-secret"   # set your token here
+    volumes:
+      - uploads:/data/uploads
+    restart: unless-stopped
+
+volumes:
+  uploads:
+```
+
+### Environment variables (deployment)
+
+| Variable       | Description                          | Default in Dockerfile |
+| -------------- | ------------------------------------ | --------------------- |
+| `ZULJIN_TOKEN` | Bearer token for protected endpoints | `zuljin-rs`           |
+| `TZ`           | Container timezone                   | `Asia/Shanghai`       |
+
+The upload directory (`/data/uploads`) and bind address (`0.0.0.0:3000`) are set in the Dockerfile `CMD` and can be overridden by appending custom arguments:
+
+```bash
+docker run -d -p 8080:8080 -e ZULJIN_TOKEN=my-secret zuljin-rs \
+  serve -b 0.0.0.0:8080 -d /data/uploads -m 500
+```
 
 ## Testing
 

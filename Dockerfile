@@ -33,7 +33,7 @@ FROM alpine AS runtime
 ARG TZ=Asia/Shanghai
 ENV TZ=${TZ}
 
-RUN apk add --no-cache tzdata ca-certificates && \
+RUN apk add --no-cache tzdata ca-certificates curl && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone
 
@@ -48,6 +48,9 @@ RUN addgroup -g 1000 zuljin && \
 USER zuljin
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/healthz || exit 1
 
 VOLUME /data/uploads
 

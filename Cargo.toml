@@ -1,11 +1,11 @@
 [package]
 name = "zuljin-rs"
-version = "0.1.0"
+version = "1.1.0"
 edition = "2024"
 publish = false
 
 [dependencies]
-axum = { version = "0.8.8", features = ["multipart"] }
+axum = { version = "0.8.9", features = ["multipart"] }
 tokio = { version = "1.51.1", features = ["full"] }
 tower-http = { version = "0.6", features = ["limit", "set-header"] }
 serde = { version = "1.0", features = ["derive"] }

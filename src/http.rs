@@ -115,6 +115,14 @@ fn verify_token(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     }
 }
 
+/// Health check endpoint. Returns project name and version.
+pub async fn healthz() -> Json<ApiResponse<serde_json::Value>> {
+    Json(ApiResponse::ok(serde_json::json!({
+        "name": env!("CARGO_PKG_NAME"),
+        "version": env!("CARGO_PKG_VERSION"),
+    })))
+}
+
 /// Handle multipart file upload. Requires token. Supports multiple files in one request.
 pub async fn upload(
     State(state): State<AppState>,
