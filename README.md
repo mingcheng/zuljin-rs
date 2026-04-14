@@ -135,7 +135,7 @@ src/
 ├── main.rs    # CLI entry point, clap commands, server startup
 ├── http.rs    # HTTP handlers, API types, token auth
 ├── client.rs  # HTTP client used by CLI commands
-├── bucket.rs  # Storage engine (naming, read/write, disk space, path traversal protection)
+├── bucket.rs  # Storage engine (naming, read/write, disk space, path traversal protection, file type detection)
 ├── meta.rs    # File metadata (size, MIME type via magic bytes)
 └── utils.rs   # Helpers (human-readable file size formatting)
 ```
@@ -162,9 +162,10 @@ All API responses (except download) use a unified JSON envelope:
 
 ## File type detection
 
-Extension is determined by the following priority:
+File extension and content type are detected in a single pass during upload,
+avoiding redundant analysis. Detection priority:
 
-1. **Magic bytes** -- `infer` library detects the file header signature (most accurate)
+1. **Magic bytes** -- `infer` library detects the file header signature (most accurate, also yields MIME type)
 2. **MIME hint** -- Content-Type from the upload, reverse-mapped to extension via `mime_guess`
 3. **Original filename** -- extension extracted from the uploaded filename
 4. **Fallback** -- `.bin`

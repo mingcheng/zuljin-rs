@@ -1,0 +1,14 @@
+services:
+  zuljin:
+    build:
+      context: .
+    ports:
+      - "3000:3000"
+    environment:
+      ZULJIN_TOKEN: ""
+    volumes:
+      - uploads:/data/uploads
+    restart: unless-stopped
+
+volumes:
+  uploads:
