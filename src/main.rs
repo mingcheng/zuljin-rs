@@ -16,6 +16,7 @@ use http::AppState;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::signal;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
@@ -170,6 +171,35 @@ fn init_tracing(verbose: bool, log_dir: Option<&str>) {
     }
 }
 
+/// Wait for a shutdown signal (SIGINT, SIGTERM, or SIGQUIT).
+///
+/// On Unix the function listens for SIGINT (Ctrl-C), SIGTERM (Docker / systemd
+/// stop), and SIGQUIT.  The first signal received triggers a graceful shutdown:
+/// in-flight requests are allowed to complete while new connections are refused.
+async fn shutdown_signal() {
+    let ctrl_c = signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            signal::unix::signal(signal::unix::SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut sigquit =
+            signal::unix::signal(signal::unix::SignalKind::quit()).expect("install SIGQUIT handler");
+
+        tokio::select! {
+            _ = ctrl_c => info!("Received SIGINT, starting graceful shutdown…"),
+            _ = sigterm.recv() => info!("Received SIGTERM, starting graceful shutdown…"),
+            _ = sigquit.recv() => info!("Received SIGQUIT, starting graceful shutdown…"),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.expect("install Ctrl-C handler");
+        info!("Received Ctrl-C, starting graceful shutdown…");
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
@@ -217,7 +247,9 @@ async fn main() -> std::io::Result<()> {
                 ));
 
             let listener = TcpListener::bind(&bind).await?;
-            axum::serve(listener, app).await
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
         }
         Commands::Upload { file, remote } => {
             init_tracing(cli.verbose, None);

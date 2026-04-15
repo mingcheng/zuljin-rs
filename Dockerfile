@@ -49,6 +49,8 @@ USER zuljin
 
 EXPOSE 3000
 
+STOPSIGNAL SIGTERM
+
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3000/healthz || exit 1
 
