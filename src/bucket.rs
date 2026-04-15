@@ -3,6 +3,7 @@ use chrono::Local;
 use infer::Infer;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
+use tracing::{debug, info, warn};
 
 /// File storage engine. Stores files under `<bucket_path>/YYYY_mm_dd/<timestamp>.<ext>`.
 pub struct Bucket {
@@ -67,23 +68,26 @@ impl Bucket {
         };
 
         if !path.exists() {
+            info!(path = %path.display(), "Bucket directory does not exist, creating");
             fs::create_dir_all(&path)?;
         } else if !path.is_dir() {
+            warn!(path = %path.display(), "Bucket path exists but is not a directory");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Path is not a directory",
             ));
         }
 
-        Ok(Bucket {
-            path: path.canonicalize()?,
-        })
+        let canonical = path.canonicalize()?;
+        info!(path = %canonical.display(), "Bucket initialized");
+        Ok(Bucket { path: canonical })
     }
 
     /// Resolve a key to its full filesystem path, returning an error if it doesn't exist.
     fn resolve(&self, key: &str) -> std::io::Result<PathBuf> {
         let full_path = self.path.join(key).canonicalize()?;
         if !full_path.starts_with(&self.path) {
+            warn!(key = %key, "Path traversal attempt blocked");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "Path traversal detected",
@@ -120,22 +124,32 @@ impl Bucket {
         }
 
         fs::write(&full_path, &data)?;
+        info!(
+            key = %key,
+            size = data.len(),
+            content_type = content_type.as_deref().unwrap_or("unknown"),
+            "File written to disk"
+        );
         Ok(SaveResult { key, content_type })
     }
 
     pub fn get_meta(&self, key: &str) -> std::io::Result<FileMeta> {
+        debug!(key = %key, "Reading file metadata");
         let full_path = self.resolve(key)?;
         FileMeta::new(full_path.to_str().unwrap())
     }
 
     pub fn get_content(&self, key: &str) -> std::io::Result<Vec<u8>> {
+        debug!(key = %key, "Reading file content");
         let full_path = self.resolve(key)?;
         fs::read(full_path)
     }
 
     pub fn delete(&self, key: &str) -> std::io::Result<()> {
         let full_path = self.resolve(key)?;
-        fs::remove_file(full_path)
+        fs::remove_file(&full_path)?;
+        info!(key = %key, "File removed from disk");
+        Ok(())
     }
 
     /// Calculate the total size and file count of the bucket directory (recursive).
@@ -158,6 +172,7 @@ impl Bucket {
         }
 
         walk(&self.path, &mut total_size, &mut file_count)?;
+        debug!(total_size, file_count, "Bucket usage calculated");
         Ok((total_size, file_count))
     }
 

@@ -2,6 +2,7 @@ use crate::http::{ApiResponse, DeleteResult, DiskInfo, FileInfo, UploadResult};
 use reqwest::multipart;
 use serde::de::DeserializeOwned;
 use std::path::Path;
+use tracing::{debug, warn};
 
 /// HTTP client for interacting with the Zuljin server API.
 pub struct Client {
@@ -36,7 +37,10 @@ impl Client {
         let resp = req
             .send()
             .await
-            .map_err(|e| format!("Request failed: {e}"))?;
+            .map_err(|e| {
+                warn!(error = %e, "HTTP request failed");
+                format!("Request failed: {e}")
+            })?;
         resp.text()
             .await
             .map_err(|e| format!("Failed to read response: {e}"))
@@ -50,7 +54,10 @@ impl Client {
         let body: ApiResponse<T> = req
             .send()
             .await
-            .map_err(|e| format!("Request failed: {e}"))?
+            .map_err(|e| {
+                warn!(error = %e, "HTTP request failed");
+                format!("Request failed: {e}")
+            })?
             .json()
             .await
             .map_err(|e| format!("Failed to parse response: {e}"))?;
@@ -58,7 +65,9 @@ impl Client {
         if body.success {
             body.data.ok_or_else(|| "Empty response".to_string())
         } else {
-            Err(body.error.unwrap_or_else(|| "Unknown error".to_string()))
+            let err_msg = body.error.unwrap_or_else(|| "Unknown error".to_string());
+            warn!(error = %err_msg, "Server returned an error");
+            Err(err_msg)
         }
     }
 
@@ -91,23 +100,29 @@ impl Client {
     }
 
     pub async fn upload(&self, file_path: &str) -> Result<Vec<UploadResult>, String> {
+        debug!(file = %file_path, server = %self.base_url, "Uploading file");
         let req = self.build_upload_request(file_path)?;
         self.send_and_parse(req).await
     }
 
     pub async fn upload_raw(&self, file_path: &str) -> Result<String, String> {
+        debug!(file = %file_path, server = %self.base_url, "Uploading file (raw)");
         let req = self.build_upload_request(file_path)?;
         self.send_raw(req).await
     }
 
     /// Download raw file bytes. No token required (public endpoint).
     pub async fn download(&self, key: &str) -> Result<Vec<u8>, String> {
+        debug!(key = %key, server = %self.base_url, "Downloading file");
         let resp = self
             .http
             .get(self.url(&format!("/get/{key}")))
             .send()
             .await
-            .map_err(|e| format!("Request failed: {e}"))?;
+            .map_err(|e| {
+                warn!(key = %key, error = %e, "Download request failed");
+                format!("Request failed: {e}")
+            })?;
 
         if !resp.status().is_success() {
             return Err(format!("Server returned {}", resp.status()));
@@ -136,11 +151,13 @@ impl Client {
     }
 
     pub async fn delete(&self, key: &str) -> Result<DeleteResult, String> {
+        debug!(key = %key, server = %self.base_url, "Deleting file");
         let req = self.with_auth(self.http.delete(self.url(&format!("/delete/{key}"))));
         self.send_and_parse(req).await
     }
 
     pub async fn delete_raw(&self, key: &str) -> Result<String, String> {
+        debug!(key = %key, server = %self.base_url, "Deleting file (raw)");
         let req = self.with_auth(self.http.delete(self.url(&format!("/delete/{key}"))));
         self.send_raw(req).await
     }

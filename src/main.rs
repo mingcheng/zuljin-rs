@@ -19,7 +19,7 @@ use tokio::net::TcpListener;
 use tokio::signal;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tracing::info;
+use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -124,6 +124,12 @@ enum Commands {
     },
 }
 
+/// Return the effective token: `ZULJIN_TOKEN` env var takes priority over the
+/// CLI-supplied value so that operators can always override via environment.
+fn effective_token(cli_token: String) -> String {
+    std::env::var("ZULJIN_TOKEN").unwrap_or(cli_token)
+}
+
 /// Unwrap a `Result`, printing the error with a label and exiting on failure.
 fn unwrap_or_exit<T>(result: Result<T, String>, label: &str) -> T {
     result.unwrap_or_else(|e| {
@@ -213,6 +219,7 @@ async fn main() -> std::io::Result<()> {
             log_dir,
         } => {
             init_tracing(cli.verbose, log_dir.as_deref());
+            let token = effective_token(token);
 
             let bucket = Arc::new(Bucket::new(&dir)?);
             info!(directory = %bucket.path.display(), "Upload directory ready");
@@ -247,9 +254,18 @@ async fn main() -> std::io::Result<()> {
                 ));
 
             let listener = TcpListener::bind(&bind).await?;
+            info!(
+                name = PKG_NAME,
+                version = PKG_VERSION,
+                build_time = BUILD_TIME,
+                address = %bind,
+                "Server is listening"
+            );
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
-                .await
+                .await?;
+            info!("Server shutdown complete");
+            Ok(())
         }
         Commands::Upload { file, remote } => {
             init_tracing(cli.verbose, None);
@@ -259,7 +275,7 @@ async fn main() -> std::io::Result<()> {
                 std::process::exit(1);
             }
 
-            let client = Client::new(&remote.server, Some(remote.token));
+            let client = Client::new(&remote.server, Some(effective_token(remote.token)));
             if remote.raw {
                 let raw = unwrap_or_exit(client.upload_raw(&file).await, "Upload failed");
                 println!("{raw}");
@@ -269,6 +285,7 @@ async fn main() -> std::io::Result<()> {
                     println!("Uploaded: {}", r.key);
                     println!("Size:     {}", utils::format_size(r.size as u64));
                 }
+                debug!(file = %file, count = results.len(), "CLI upload completed");
             }
             Ok(())
         }
@@ -292,11 +309,12 @@ async fn main() -> std::io::Result<()> {
             std::fs::write(&out_path, &content)?;
             println!("Downloaded to: {}", out_path);
             println!("Size: {}", utils::format_size(content.len() as u64));
+            debug!(key = %key, output = %out_path, size = content.len(), "CLI download completed");
             Ok(())
         }
         Commands::Info { key, remote } => {
             init_tracing(cli.verbose, None);
-            let client = Client::new(&remote.server, Some(remote.token));
+            let client = Client::new(&remote.server, Some(effective_token(remote.token)));
             if remote.raw {
                 let raw = unwrap_or_exit(client.info_raw(&key).await, "Info failed");
                 println!("{raw}");
@@ -317,7 +335,7 @@ async fn main() -> std::io::Result<()> {
         }
         Commands::Disk { remote } => {
             init_tracing(cli.verbose, None);
-            let client = Client::new(&remote.server, Some(remote.token));
+            let client = Client::new(&remote.server, Some(effective_token(remote.token)));
             if remote.raw {
                 let raw = unwrap_or_exit(client.disk_raw().await, "Disk info failed");
                 println!("{raw}");
@@ -335,13 +353,14 @@ async fn main() -> std::io::Result<()> {
         }
         Commands::Delete { key, remote } => {
             init_tracing(cli.verbose, None);
-            let client = Client::new(&remote.server, Some(remote.token));
+            let client = Client::new(&remote.server, Some(effective_token(remote.token)));
             if remote.raw {
                 let raw = unwrap_or_exit(client.delete_raw(&key).await, "Delete failed");
                 println!("{raw}");
             } else {
                 let result = unwrap_or_exit(client.delete(&key).await, "Delete failed");
                 println!("Deleted: {}", result.key);
+                debug!(key = %key, "CLI delete completed");
             }
             Ok(())
         }

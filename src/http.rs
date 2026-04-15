@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Shared application state, injected into all handlers via axum's `State` extractor.
 #[derive(Clone)]
@@ -86,13 +86,11 @@ fn verify_token(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
         None => return Ok(()), // no token configured, skip auth
     };
     debug!("Verifying token for request");
-    debug!("Expected token: {}", expected);
 
     let provided = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    debug!("Provided token: {}", provided.unwrap_or("<none>"));
 
     match provided {
         // Constant-time comparison to prevent timing attacks
@@ -110,6 +108,7 @@ fn verify_token(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
 
 /// Health check endpoint. Returns project name and version.
 pub async fn healthz() -> Json<ApiResponse<serde_json::Value>> {
+    debug!("Health check requested");
     Json(ApiResponse::ok(serde_json::json!({
         "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
@@ -130,6 +129,7 @@ pub async fn upload(
         let file_name = field.file_name().map(|s| s.to_string());
         let content_type = field.content_type().map(|s| s.to_string());
         let data = field.bytes().await.map_err(|e| {
+            error!(error = %e, "Failed to read multipart field");
             err_response(
                 StatusCode::BAD_REQUEST,
                 format!("Failed to read field: {e}"),
@@ -147,6 +147,11 @@ pub async fn upload(
         } = bucket
             .save(data.to_vec(), content_type.as_deref(), file_name.as_deref())
             .map_err(|e| {
+                error!(
+                    error = %e,
+                    original_name = file_name.as_deref().unwrap_or("-"),
+                    "Failed to save uploaded file"
+                );
                 err_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Failed to save file: {e}"),
@@ -167,9 +172,11 @@ pub async fn upload(
     }
 
     if results.is_empty() {
+        warn!("Upload request received but no files were provided");
         return Err(err_response(StatusCode::BAD_REQUEST, "No file uploaded"));
     }
 
+    info!(count = results.len(), "Upload request completed");
     Ok(Json(ApiResponse::ok(results)))
 }
 
@@ -182,11 +189,21 @@ pub async fn download(
     let content = state
         .bucket
         .get_content(&path)
-        .map_err(|e| err_response(StatusCode::NOT_FOUND, format!("File not found: {e}")))?;
+        .map_err(|e| {
+            warn!(key = %path, error = %e, "Download failed: file not found");
+            err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
+        })?;
 
     let content_type = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
+
+    info!(
+        key = %path,
+        size = content.len(),
+        content_type = %content_type,
+        "File downloaded"
+    );
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -205,10 +222,16 @@ pub async fn file_info(
     Path(key): Path<String>,
 ) -> Result<Json<ApiResponse<FileInfo>>, ApiError> {
     verify_token(&state, &headers)?;
+    debug!(key = %key, "File info requested");
     let meta = state
         .bucket
         .get_meta(&key)
-        .map_err(|e| err_response(StatusCode::NOT_FOUND, format!("File not found: {e}")))?;
+        .map_err(|e| {
+            warn!(key = %key, error = %e, "File info failed: file not found");
+            err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
+        })?;
+
+    info!(key = %key, size = meta.size, "File info retrieved");
 
     Ok(Json(ApiResponse::ok(FileInfo {
         key,
@@ -224,7 +247,9 @@ pub async fn disk_info(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<DiskInfo>>, ApiError> {
     verify_token(&state, &headers)?;
+    debug!("Disk info requested");
     let (total, available) = state.bucket.disk_space().map_err(|e| {
+        error!(error = %e, "Failed to query disk space");
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to get disk space: {e}"),
@@ -232,11 +257,19 @@ pub async fn disk_info(
     })?;
 
     let (used, file_count) = state.bucket.usage().map_err(|e| {
+        error!(error = %e, "Failed to calculate bucket usage");
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to get usage: {e}"),
         )
     })?;
+
+    info!(
+        file_count,
+        used = %crate::utils::format_size(used),
+        available = %crate::utils::format_size(available),
+        "Disk info retrieved"
+    );
 
     Ok(Json(ApiResponse::ok(DiskInfo {
         path: state.bucket.path.display().to_string(),
@@ -267,9 +300,12 @@ pub async fn delete_file(
     state
         .bucket
         .delete(&key)
-        .map_err(|e| err_response(StatusCode::NOT_FOUND, format!("File not found: {e}")))?;
+        .map_err(|e| {
+            warn!(key = %key, error = %e, "Delete failed: file not found");
+            err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
+        })?;
 
-    info!(key = %key, "File deleted");
+    info!(key = %key, "File deleted via API");
     Ok(Json(ApiResponse::ok(DeleteResult { key })))
 }
 
