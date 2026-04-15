@@ -266,7 +266,12 @@ pub async fn disk_info(
     );
 
     Ok(Json(ApiResponse::ok(DiskInfo {
-        path: state.bucket.path.display().to_string(),
+        path: state
+            .bucket
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "uploads".to_string()),
         total,
         total_human: crate::utils::format_size(total),
         available,

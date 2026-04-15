@@ -1,8 +1,12 @@
+use sha2::Digest;
 use subtle::ConstantTimeEq;
 
 /// Constant-time string comparison to prevent timing attacks.
+/// Uses hashing to normalize lengths, avoiding leaking the length of either input.
 pub fn secure_compare(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.as_bytes().ct_eq(b.as_bytes()).into()
+    let hash_a = sha2::Sha256::digest(a.as_bytes());
+    let hash_b = sha2::Sha256::digest(b.as_bytes());
+    hash_a.ct_eq(&hash_b).into()
 }
 
 /// Format a byte count into a human-readable string (e.g. "1.50 KB", "3.00 GB").

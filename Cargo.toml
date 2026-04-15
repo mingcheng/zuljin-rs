@@ -22,6 +22,7 @@ tracing-appender = "0.2"
 compile-time = "0.2.0"
 const_format = "0.2.35"
 subtle = "2"
+sha2 = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3"

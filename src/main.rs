@@ -177,6 +177,68 @@ fn init_tracing(verbose: bool, log_dir: Option<&str>) {
     }
 }
 
+/// Context for preflight checks. New fields added here are automatically
+/// available to `preflight_checks` without changing its signature.
+struct PreflightContext {
+    bind: String,
+    max_size: usize,
+    token: String,
+    log_dir: Option<String>,
+}
+
+/// Run preflight checks before starting the server.
+/// If any check fails, log the error and exit the process.
+fn preflight_checks(config: &PreflightContext, bucket: &Bucket) {
+    let mut errors: Vec<String> = Vec::new();
+
+    // Upload directory must be writable
+    let probe = bucket.path.join(".zuljin_write_probe");
+    match std::fs::write(&probe, b"probe") {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+        }
+        Err(e) => {
+            errors.push(format!(
+                "Upload directory '{}' is not writable: {e}",
+                bucket.path.display()
+            ));
+        }
+    }
+
+    // Token must not be empty
+    if config.token.is_empty() {
+        errors.push("Auth token is empty; set --token or ZULJIN_TOKEN".to_string());
+    }
+
+    // Max upload size must be positive
+    if config.max_size == 0 {
+        errors.push("Max upload size must be greater than 0".to_string());
+    }
+
+    // Log directory (if specified) must be writable
+    if let Some(dir) = &config.log_dir {
+        let log_probe = Path::new(dir).join(".zuljin_write_probe");
+        match std::fs::write(&log_probe, b"probe") {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&log_probe);
+            }
+            Err(e) => {
+                errors.push(format!("Log directory '{dir}' is not writable: {e}"));
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        for msg in &errors {
+            tracing::error!("{msg}");
+        }
+        tracing::error!("Preflight checks failed, exiting");
+        std::process::exit(1);
+    }
+
+    info!("Preflight checks passed");
+}
+
 /// Wait for a shutdown signal (SIGINT, SIGTERM, or SIGQUIT).
 ///
 /// On Unix the function listens for SIGINT (Ctrl-C), SIGTERM (Docker / systemd
@@ -221,16 +283,26 @@ async fn main() -> std::io::Result<()> {
             init_tracing(cli.verbose, log_dir.as_deref());
             let token = effective_token(token);
 
+            let config = PreflightContext {
+                bind,
+                max_size,
+                token,
+                log_dir,
+            };
+
             let bucket = Arc::new(Bucket::new(&dir)?);
             info!(directory = %bucket.path.display(), "Upload directory ready");
-            info!("Token auth enabled");
-            tracing::debug!(token = %token, "Configured token");
 
-            info!(address = %bind, max_size_mb = max_size, "Starting server");
+            preflight_checks(&config, &bucket);
+
+            info!("Token auth enabled");
+            tracing::debug!(token = %config.token, "Configured token");
+
+            info!(address = %config.bind, max_size_mb = config.max_size, "Starting server");
 
             let state = AppState {
                 bucket,
-                token: Some(token),
+                token: Some(config.token.clone()),
             };
 
             let app = Router::new()
@@ -242,7 +314,7 @@ async fn main() -> std::io::Result<()> {
                 .route("/delete/{*path}", delete(http::delete_file))
                 .with_state(state)
                 .layer(DefaultBodyLimit::disable())
-                .layer(RequestBodyLimitLayer::new(max_size * 1024 * 1024))
+                .layer(RequestBodyLimitLayer::new(config.max_size * 1024 * 1024))
                 .layer(SetResponseHeaderLayer::overriding(
                     axum::http::header::SERVER,
                     HeaderValue::from_static(const_format::formatcp!(
@@ -253,12 +325,12 @@ async fn main() -> std::io::Result<()> {
                     )),
                 ));
 
-            let listener = TcpListener::bind(&bind).await?;
+            let listener = TcpListener::bind(&config.bind).await?;
             info!(
                 name = PKG_NAME,
                 version = PKG_VERSION,
                 build_time = BUILD_TIME,
-                address = %bind,
+                address = %config.bind,
                 "Server is listening"
             );
             axum::serve(listener, app)
