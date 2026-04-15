@@ -7,7 +7,6 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use subtle::ConstantTimeEq;
 use tracing::{debug, info, warn};
 
 /// Shared application state, injected into all handlers via axum's `State` extractor.
@@ -97,12 +96,7 @@ fn verify_token(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
 
     match provided {
         // Constant-time comparison to prevent timing attacks
-        Some(t)
-            if t.as_bytes().len() == expected.as_bytes().len()
-                && t.as_bytes().ct_eq(expected.as_bytes()).into() =>
-        {
-            Ok(())
-        }
+        Some(t) if crate::utils::secure_compare(t, expected) => Ok(()),
         Some(_) => {
             warn!("Authentication failed: invalid token");
             Err(err_response(StatusCode::UNAUTHORIZED, "Invalid token"))

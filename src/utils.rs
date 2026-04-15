@@ -1,3 +1,10 @@
+use subtle::ConstantTimeEq;
+
+/// Constant-time string comparison to prevent timing attacks.
+pub fn secure_compare(a: &str, b: &str) -> bool {
+    a.as_bytes().len() == b.as_bytes().len() && a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
 /// Format a byte count into a human-readable string (e.g. "1.50 KB", "3.00 GB").
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
@@ -49,5 +56,31 @@ mod tests {
     #[test]
     fn test_format_tb() {
         assert_eq!(format_size(1024 * 1024 * 1024 * 1024), "1.00 TB");
+    }
+
+    #[test]
+    fn test_secure_compare_equal() {
+        assert!(secure_compare("secret123", "secret123"));
+    }
+
+    #[test]
+    fn test_secure_compare_different_content() {
+        assert!(!secure_compare("secret123", "secret456"));
+    }
+
+    #[test]
+    fn test_secure_compare_different_length() {
+        assert!(!secure_compare("short", "longer_string"));
+    }
+
+    #[test]
+    fn test_secure_compare_empty() {
+        assert!(secure_compare("", ""));
+    }
+
+    #[test]
+    fn test_secure_compare_one_empty() {
+        assert!(!secure_compare("", "notempty"));
+        assert!(!secure_compare("notempty", ""));
     }
 }
