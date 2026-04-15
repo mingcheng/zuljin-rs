@@ -3079,6 +3079,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "tokio",
  "tower-http",

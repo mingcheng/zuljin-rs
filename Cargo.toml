@@ -21,6 +21,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 compile-time = "0.2.0"
 const_format = "0.2.35"
+subtle = "2"
 
 [dev-dependencies]
 tempfile = "3"
