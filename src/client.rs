@@ -34,13 +34,10 @@ impl Client {
 
     /// Send a request and return the raw response body as a string.
     async fn send_raw(&self, req: reqwest::RequestBuilder) -> Result<String, String> {
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| {
-                warn!(error = %e, "HTTP request failed");
-                format!("Request failed: {e}")
-            })?;
+        let resp = req.send().await.map_err(|e| {
+            warn!(error = %e, "HTTP request failed");
+            format!("Request failed: {e}")
+        })?;
         resp.text()
             .await
             .map_err(|e| format!("Failed to read response: {e}"))

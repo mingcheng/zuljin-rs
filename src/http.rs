@@ -186,13 +186,10 @@ pub async fn download(
     Path(path): Path<String>,
 ) -> Result<Response, ApiError> {
     debug!(key = %path, "File download requested");
-    let content = state
-        .bucket
-        .get_content(&path)
-        .map_err(|e| {
-            warn!(key = %path, error = %e, "Download failed: file not found");
-            err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
-        })?;
+    let content = state.bucket.get_content(&path).map_err(|e| {
+        warn!(key = %path, error = %e, "Download failed: file not found");
+        err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
+    })?;
 
     let content_type = mime_guess::from_path(&path)
         .first_or_octet_stream()
@@ -223,13 +220,10 @@ pub async fn file_info(
 ) -> Result<Json<ApiResponse<FileInfo>>, ApiError> {
     verify_token(&state, &headers)?;
     debug!(key = %key, "File info requested");
-    let meta = state
-        .bucket
-        .get_meta(&key)
-        .map_err(|e| {
-            warn!(key = %key, error = %e, "File info failed: file not found");
-            err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
-        })?;
+    let meta = state.bucket.get_meta(&key).map_err(|e| {
+        warn!(key = %key, error = %e, "File info failed: file not found");
+        err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
+    })?;
 
     info!(key = %key, size = meta.size, "File info retrieved");
 
@@ -297,13 +291,10 @@ pub async fn delete_file(
     Path(key): Path<String>,
 ) -> Result<Json<ApiResponse<DeleteResult>>, ApiError> {
     verify_token(&state, &headers)?;
-    state
-        .bucket
-        .delete(&key)
-        .map_err(|e| {
-            warn!(key = %key, error = %e, "Delete failed: file not found");
-            err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
-        })?;
+    state.bucket.delete(&key).map_err(|e| {
+        warn!(key = %key, error = %e, "Delete failed: file not found");
+        err_response(StatusCode::NOT_FOUND, format!("File not found: {e}"))
+    })?;
 
     info!(key = %key, "File deleted via API");
     Ok(Json(ApiResponse::ok(DeleteResult { key })))

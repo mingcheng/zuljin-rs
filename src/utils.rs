@@ -2,7 +2,7 @@ use subtle::ConstantTimeEq;
 
 /// Constant-time string comparison to prevent timing attacks.
 pub fn secure_compare(a: &str, b: &str) -> bool {
-    a.as_bytes().len() == b.as_bytes().len() && a.as_bytes().ct_eq(b.as_bytes()).into()
+    a.len() == b.len() && a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 /// Format a byte count into a human-readable string (e.g. "1.50 KB", "3.00 GB").
