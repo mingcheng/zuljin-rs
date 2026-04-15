@@ -49,7 +49,7 @@ struct RemoteArgs {
     server: String,
     /// Auth token (also reads ZULJIN_TOKEN env)
     #[arg(long, env = "ZULJIN_TOKEN")]
-    token: Option<String>,
+    token: String,
 }
 
 #[derive(Subcommand)]
@@ -67,7 +67,7 @@ enum Commands {
         max_size: usize,
         /// Auth token (also reads ZULJIN_TOKEN env)
         #[arg(short, long, env = "ZULJIN_TOKEN")]
-        token: Option<String>,
+        token: String,
         /// Directory for log files (monthly rotation, e.g. logs/2026-04.log)
         #[arg(long, env = "ZULJIN_LOG_DIR")]
         log_dir: Option<String>,
@@ -183,12 +183,12 @@ async fn main() -> std::io::Result<()> {
 
             let bucket = Arc::new(Bucket::new(&dir)?);
             info!(directory = %bucket.path.display(), "Upload directory ready");
-            if token.is_some() {
-                info!("Token auth enabled");
-            }
+            info!("Token auth enabled");
+            tracing::debug!(token = %token, "Configured token");
+
             info!(address = %bind, max_size_mb = max_size, "Starting server");
 
-            let state = AppState { bucket, token };
+            let state = AppState { bucket, token: Some(token) };
 
             let app = Router::new()
                 .route("/healthz", get(http::healthz))
@@ -221,7 +221,7 @@ async fn main() -> std::io::Result<()> {
                 std::process::exit(1);
             }
 
-            let client = Client::new(&remote.server, remote.token);
+            let client = Client::new(&remote.server, Some(remote.token));
             let results = unwrap_or_exit(client.upload(&file).await, "Upload failed");
             for r in &results {
                 println!("Uploaded: {}", r.key);
@@ -253,7 +253,7 @@ async fn main() -> std::io::Result<()> {
         }
         Commands::Info { key, remote } => {
             init_tracing(cli.verbose, None);
-            let client = Client::new(&remote.server, remote.token);
+            let client = Client::new(&remote.server, Some(remote.token));
             let info = unwrap_or_exit(client.info(&key).await, "Info failed");
             println!("Key:          {}", info.key);
             println!("Size:         {}", utils::format_size(info.size as u64));
@@ -269,7 +269,7 @@ async fn main() -> std::io::Result<()> {
         }
         Commands::Disk { remote } => {
             init_tracing(cli.verbose, None);
-            let client = Client::new(&remote.server, remote.token);
+            let client = Client::new(&remote.server, Some(remote.token));
             let info = unwrap_or_exit(client.disk().await, "Disk info failed");
             println!("Upload directory: {}", info.path);
             println!("File count:       {}", info.file_count);
@@ -282,7 +282,7 @@ async fn main() -> std::io::Result<()> {
         }
         Commands::Delete { key, remote } => {
             init_tracing(cli.verbose, None);
-            let client = Client::new(&remote.server, remote.token);
+            let client = Client::new(&remote.server, Some(remote.token));
             let result = unwrap_or_exit(client.delete(&key).await, "Delete failed");
             println!("Deleted: {}", result.key);
             Ok(())
