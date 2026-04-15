@@ -181,10 +181,10 @@ async fn shutdown_signal() {
 
     #[cfg(unix)]
     {
-        let mut sigterm =
-            signal::unix::signal(signal::unix::SignalKind::terminate()).expect("install SIGTERM handler");
-        let mut sigquit =
-            signal::unix::signal(signal::unix::SignalKind::quit()).expect("install SIGQUIT handler");
+        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        let mut sigquit = signal::unix::signal(signal::unix::SignalKind::quit())
+            .expect("install SIGQUIT handler");
 
         tokio::select! {
             _ = ctrl_c => info!("Received SIGINT, starting graceful shutdown…"),
