@@ -9,17 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-/// Constant-time byte comparison to prevent timing attacks on token validation.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
 /// Shared application state, injected into all handlers via axum's `State` extractor.
 #[derive(Clone)]
 pub struct AppState {
@@ -96,14 +85,18 @@ fn verify_token(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
         Some(t) => t,
         None => return Ok(()), // no token configured, skip auth
     };
+    debug!("Verifying token for request");
+    debug!("Expected token: {}", expected);
 
     let provided = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
+    debug!("Provided token: {}", provided.unwrap_or("<none>"));
 
     match provided {
-        Some(t) if constant_time_eq(t.as_bytes(), expected.as_bytes()) => Ok(()),
+        // Token matches expected value -> OK
+        Some(t) if (t == expected) => Ok(()),
         Some(_) => {
             warn!("Authentication failed: invalid token");
             Err(err_response(StatusCode::UNAUTHORIZED, "Invalid token"))

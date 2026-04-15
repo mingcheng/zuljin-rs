@@ -31,6 +31,17 @@ impl Client {
         }
     }
 
+    /// Send a request and return the raw response body as a string.
+    async fn send_raw(&self, req: reqwest::RequestBuilder) -> Result<String, String> {
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {e}"))?;
+        resp.text()
+            .await
+            .map_err(|e| format!("Failed to read response: {e}"))
+    }
+
     /// Send a request, parse the `ApiResponse<T>` envelope, and extract the data or error.
     async fn send_and_parse<T: DeserializeOwned>(
         &self,
@@ -56,7 +67,12 @@ impl Client {
         self.send_and_parse(req).await
     }
 
-    pub async fn upload(&self, file_path: &str) -> Result<Vec<UploadResult>, String> {
+    async fn get_raw(&self, path: &str) -> Result<String, String> {
+        let req = self.with_auth(self.http.get(self.url(path)));
+        self.send_raw(req).await
+    }
+
+    fn build_upload_request(&self, file_path: &str) -> Result<reqwest::RequestBuilder, String> {
         let path = Path::new(file_path);
         let file_name = path
             .file_name()
@@ -69,11 +85,19 @@ impl Client {
         let part = multipart::Part::bytes(data).file_name(file_name);
         let form = multipart::Form::new().part("file", part);
 
-        let req = self
+        Ok(self
             .with_auth(self.http.post(self.url("/upload")))
-            .multipart(form);
+            .multipart(form))
+    }
 
+    pub async fn upload(&self, file_path: &str) -> Result<Vec<UploadResult>, String> {
+        let req = self.build_upload_request(file_path)?;
         self.send_and_parse(req).await
+    }
+
+    pub async fn upload_raw(&self, file_path: &str) -> Result<String, String> {
+        let req = self.build_upload_request(file_path)?;
+        self.send_raw(req).await
     }
 
     /// Download raw file bytes. No token required (public endpoint).
@@ -99,12 +123,25 @@ impl Client {
         self.get_json(&format!("/info/{key}")).await
     }
 
+    pub async fn info_raw(&self, key: &str) -> Result<String, String> {
+        self.get_raw(&format!("/info/{key}")).await
+    }
+
     pub async fn disk(&self) -> Result<DiskInfo, String> {
         self.get_json("/disk").await
+    }
+
+    pub async fn disk_raw(&self) -> Result<String, String> {
+        self.get_raw("/disk").await
     }
 
     pub async fn delete(&self, key: &str) -> Result<DeleteResult, String> {
         let req = self.with_auth(self.http.delete(self.url(&format!("/delete/{key}"))));
         self.send_and_parse(req).await
+    }
+
+    pub async fn delete_raw(&self, key: &str) -> Result<String, String> {
+        let req = self.with_auth(self.http.delete(self.url(&format!("/delete/{key}"))));
+        self.send_raw(req).await
     }
 }

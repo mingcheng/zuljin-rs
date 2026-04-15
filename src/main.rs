@@ -50,6 +50,9 @@ struct RemoteArgs {
     /// Auth token (also reads ZULJIN_TOKEN env)
     #[arg(long, env = "ZULJIN_TOKEN")]
     token: String,
+    /// Print raw JSON response from server
+    #[arg(long)]
+    raw: bool,
 }
 
 #[derive(Subcommand)]
@@ -188,7 +191,10 @@ async fn main() -> std::io::Result<()> {
 
             info!(address = %bind, max_size_mb = max_size, "Starting server");
 
-            let state = AppState { bucket, token: Some(token) };
+            let state = AppState {
+                bucket,
+                token: Some(token),
+            };
 
             let app = Router::new()
                 .route("/healthz", get(http::healthz))
@@ -222,10 +228,15 @@ async fn main() -> std::io::Result<()> {
             }
 
             let client = Client::new(&remote.server, Some(remote.token));
-            let results = unwrap_or_exit(client.upload(&file).await, "Upload failed");
-            for r in &results {
-                println!("Uploaded: {}", r.key);
-                println!("Size:     {}", utils::format_size(r.size as u64));
+            if remote.raw {
+                let raw = unwrap_or_exit(client.upload_raw(&file).await, "Upload failed");
+                println!("{raw}");
+            } else {
+                let results = unwrap_or_exit(client.upload(&file).await, "Upload failed");
+                for r in &results {
+                    println!("Uploaded: {}", r.key);
+                    println!("Size:     {}", utils::format_size(r.size as u64));
+                }
             }
             Ok(())
         }
@@ -254,37 +265,52 @@ async fn main() -> std::io::Result<()> {
         Commands::Info { key, remote } => {
             init_tracing(cli.verbose, None);
             let client = Client::new(&remote.server, Some(remote.token));
-            let info = unwrap_or_exit(client.info(&key).await, "Info failed");
-            println!("Key:          {}", info.key);
-            println!("Size:         {}", utils::format_size(info.size as u64));
-            println!(
-                "Content-Type: {}",
-                info.content_type.as_deref().unwrap_or("unknown")
-            );
-            println!(
-                "Extension:    {}",
-                info.extension.as_deref().unwrap_or("unknown")
-            );
+            if remote.raw {
+                let raw = unwrap_or_exit(client.info_raw(&key).await, "Info failed");
+                println!("{raw}");
+            } else {
+                let info = unwrap_or_exit(client.info(&key).await, "Info failed");
+                println!("Key:          {}", info.key);
+                println!("Size:         {}", utils::format_size(info.size as u64));
+                println!(
+                    "Content-Type: {}",
+                    info.content_type.as_deref().unwrap_or("unknown")
+                );
+                println!(
+                    "Extension:    {}",
+                    info.extension.as_deref().unwrap_or("unknown")
+                );
+            }
             Ok(())
         }
         Commands::Disk { remote } => {
             init_tracing(cli.verbose, None);
             let client = Client::new(&remote.server, Some(remote.token));
-            let info = unwrap_or_exit(client.disk().await, "Disk info failed");
-            println!("Upload directory: {}", info.path);
-            println!("File count:       {}", info.file_count);
-            println!("Directory usage:  {}", info.used_human);
-            println!("Disk total:       {}", info.total_human);
-            println!("Disk available:   {}", info.available_human);
-            println!("OS:               {}", info.os);
-            println!("Arch:             {}", info.arch);
+            if remote.raw {
+                let raw = unwrap_or_exit(client.disk_raw().await, "Disk info failed");
+                println!("{raw}");
+            } else {
+                let info = unwrap_or_exit(client.disk().await, "Disk info failed");
+                println!("Upload directory: {}", info.path);
+                println!("File count:       {}", info.file_count);
+                println!("Directory usage:  {}", info.used_human);
+                println!("Disk total:       {}", info.total_human);
+                println!("Disk available:   {}", info.available_human);
+                println!("OS:               {}", info.os);
+                println!("Arch:             {}", info.arch);
+            }
             Ok(())
         }
         Commands::Delete { key, remote } => {
             init_tracing(cli.verbose, None);
             let client = Client::new(&remote.server, Some(remote.token));
-            let result = unwrap_or_exit(client.delete(&key).await, "Delete failed");
-            println!("Deleted: {}", result.key);
+            if remote.raw {
+                let raw = unwrap_or_exit(client.delete_raw(&key).await, "Delete failed");
+                println!("{raw}");
+            } else {
+                let result = unwrap_or_exit(client.delete(&key).await, "Delete failed");
+                println!("Deleted: {}", result.key);
+            }
             Ok(())
         }
     }
